@@ -30,4 +30,4 @@ req.add_header("Content-Type", "application/json")
 
 resp = urllib.request.urlopen(req)
 result = json.loads(resp.read().decode())
-print("✅ Topics définis :", result.get("names", TOPICS))
+print("Topics OK :", result.get("names", TOPICS))
