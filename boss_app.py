@@ -78,6 +78,56 @@ def build_boss(allow_irreversible: bool, brand_name: str,
 
 
 # -------------------------------------------------------------------------- #
+#  Docteur (vérification santé)
+# -------------------------------------------------------------------------- #
+def _run_doctor():
+    """Vérifie disque + LLM et affiche le résultat dans la sidebar."""
+    import tempfile
+    from boss_agent import Doctor, LLM, Audit, Permissions
+    from pathlib import Path
+    tmp = Path(tempfile.mkdtemp())
+    audit = Audit(tmp / "audit.jsonl")
+    perms = Permissions(audit, lambda *a, **k: False)
+    doctor = Doctor(audit, perms, tmp)
+    llm = LLM()
+    with st.spinner("Vérification..."):
+        sante = doctor.health_check(llm)
+    st.session_state["sante"] = sante
+
+
+sante = st.session_state.get("sante")
+if sante:
+    st.subheader("🩺 Santé du Boss")
+    # Disque
+    if sante.get("disque"):
+        st.success("💾 Disque : OK")
+    else:
+        st.error("💾 Disque : ECHEC")
+    # LLM
+    if sante.get("llm"):
+        st.success(f"🧠 LLM : OK — mode {sante.get('llm_mode', '?')}")
+    else:
+        st.error("🧠 LLM : ECHEC — FreeLLMAPI injoignable")
+        st.markdown("""
+        **FreeLLMAPI ne répond pas sur `http://127.0.0.1:31415`.**
+
+        Pour le démarrer :
+        1. Ouvre l'app **FreeLLMAPI** (menu Démarrer ou double-clic sur `FreeLLMAPI.exe`)
+        2. Attends que son serveur local démarre (icône dans la barre des tâches)
+        3. Re-clique sur **🩺 Docteur**
+
+        Si FreeLLMAPI refuse de fonctionner, tu peux :
+        - Installer une clé `FREELLMAPI_KEY` alternative
+        - Ou utiliser un autre provider (Pollinations, Fal.ai…)
+        """)
+    # Providers (fallbacks)
+    providers = sante.get("providers", [])
+    if providers:
+        with st.expander(f"Providers configurés ({len(providers)})"):
+            st.json(providers)
+
+
+# -------------------------------------------------------------------------- #
 #  Interface
 # -------------------------------------------------------------------------- #
 st.set_page_config(page_title="Boss Agent", page_icon="🧠", layout="centered")
@@ -100,6 +150,9 @@ with st.sidebar:
     st.caption("Décoché : le Boss refuse ces actions, tout le reste est autorisé.")
     st.divider()
     st.caption("LLM : FreeLLMAPI local — gratuit, sans clé externe.")
+    st.divider()
+    if st.button("🩺 Docteur — vérifier la santé", use_container_width=True):
+        _run_doctor()
 
 mission = st.text_area(
     "Mission", height=160,
