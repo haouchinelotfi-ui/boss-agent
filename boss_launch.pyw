@@ -122,17 +122,74 @@ def main() -> int:
               erreur=True)
         return 4
 
-    # 6. Ouvrir le navigateur sur la fenêtre du Boss.
-    webbrowser.open(URL)
+    # 6. Ouvrir le navigateur sur la fenêtre du Boss (plusieurs tentatives).
+    if not ouvrir_navigateur(URL):
+        # L ouverture automatique a echouee : on propose un bouton manuel.
+        alert_ouvrir(URL)
 
     # 7. Garder le lanceur vivant tant que Streamlit tourne (pour que
-    #    l'icône de la barre des tâches reste présente). Quand l'utilisateur
-    #    ferme Streamlit (Ctrl+C ou arrêt), le lanceur se termine proprement.
+    #    l icone de la barre des taches reste presente). Quand l utilisateur
+    #    ferme Streamlit (Ctrl+C ou arret), le lanceur se termine proprement.
     try:
         proc.wait()
     except KeyboardInterrupt:
         proc.terminate()
     return 0
+
+
+# --------------------------------------------------------------------------- #
+#  Ouverture robuste du navigateur (pythonw peut faire echouer webbrowser)
+# --------------------------------------------------------------------------- #
+def ouvrir_navigateur(url: str) -> bool:
+    """Tente d ouvrir le navigateur par plusieurs methodes."""
+    # Methode 1 : webbrowser.open, plusieurs essais etcarts.
+    for i in range(4):
+        try:
+            ok = webbrowser.open(url, new=2)
+            if ok:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.8)
+    # Methode 2 : os.startfile (Windows) — equivalent a un double-clic sur l URL.
+    try:
+        os.startfile(url)  # type: ignore[attr-defined]
+        return True
+    except Exception:
+        pass
+    return False
+
+
+def alert_ouvrir(url: str) -> None:
+    """Le Boss est pret mais le navigateur ne s est pas ouvert : on propose
+    un bouton pour l ouvrir manuellement."""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.title("Boss Agent")
+        root.geometry("460x180")
+        root.resizable(False, False)
+        if (HERE / "boss.ico").exists():
+            root.iconbitmap(default=str(HERE / "boss.ico"))
+        tk.Label(root, text="✅ Le Boss est pret !",
+                 font=("Segoe UI", 14, "bold")).pack(pady=(18, 6))
+        tk.Label(root, text=f"Le serveur tourne sur :\n{url}",
+                 font=("Segoe UI", 10)).pack(pady=4)
+        def ouvrir():
+            try:
+                os.startfile(url)  # type: ignore[attr-defined]
+            except Exception:
+                webbrowser.open(url)
+            root.destroy()
+        tk.Button(root, text="Ouvrir le Boss", command=ouvrir,
+                  font=("Segoe UI", 11, "bold"), width=18, height=1,
+                  bg="#4CAF50", fg="white", relief="flat").pack(pady=12)
+        root.mainloop()
+    except Exception:
+        # Dernier recours : alerte simple.
+        alert("Boss Agent — pret",
+              f"Le Boss est pret. Ouvre manuellement :\n{url}")
 
 
 if __name__ == "__main__":
