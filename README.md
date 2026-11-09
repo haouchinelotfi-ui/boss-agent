@@ -1,5 +1,10 @@
 # Boss Agent
 
+[![CI](https://github.com/haouchinelotfi-ui/boss-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/haouchinelotfi-ui/boss-agent/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Local LLM](https://img.shields.io/badge/LLM-FreeLLMAPI%20local-green.svg)](http://127.0.0.1:31415)
+
 Manager autonome qui **planifie, délègue, contrôle, répare et livre**.
 Tourne 100 % en local via [FreeLLMAPI](http://127.0.0.1:31415) — aucun token
 cloud payant requis.
