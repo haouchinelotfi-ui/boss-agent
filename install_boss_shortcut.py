@@ -106,18 +106,32 @@ print(f"[OK] Icône créée : {ICON_PATH}")
 STABLE_DIR = os.path.join(os.path.expanduser("~"), "boss_agent")
 os.makedirs(STABLE_DIR, exist_ok=True)
 
+verrouilles = []
 for fname in ("boss_agent.py", "boss_app.py", "agent_pub.py", "boss_launch.pyw"):
     src = os.path.join(HERE, fname)
     dst = os.path.join(STABLE_DIR, fname)
     if os.path.exists(src):
-        shutil.copy2(src, dst)
-        print(f"[OK] Copié : {dst}")
+        try:
+            shutil.copy2(src, dst)
+            print(f"[OK] Copié : {dst}")
+        except PermissionError:
+            # Fichier utilise par un processus (Streamlit tourne encore ?)
+            verrouilles.append(fname)
+            print(f"[!] Verrouille (saute) : {fname} — ferme Streamlit et relance.")
     else:
         print(f"[!] Manquant (ignoré) : {src}")
 
 # icône dans le dossier stable
 ICON_DST = os.path.join(STABLE_DIR, "boss.ico")
-shutil.copy2(ICON_PATH, ICON_DST)
+try:
+    shutil.copy2(ICON_PATH, ICON_DST)
+except PermissionError:
+    print("[!] boss.ico verrouille — icône existante conservee.")
+
+if verrouilles:
+    print("\n[!] Certains fichiers etaient verrouilles (Streamlit tourne encore).")
+    print("    1. Ferme Streamlit : ferme la fenetre console / tue le processus")
+    print("    2. Relance : python install_boss_shortcut.py")
 
 # --------------------------------------------------------------------------- #
 #  3. CREDENTIALS STREAMLIT (évite le prompt email)
