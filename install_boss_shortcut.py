@@ -106,7 +106,7 @@ print(f"[OK] Icône créée : {ICON_PATH}")
 STABLE_DIR = os.path.join(os.path.expanduser("~"), "boss_agent")
 os.makedirs(STABLE_DIR, exist_ok=True)
 
-for fname in ("boss_agent.py", "boss_app.py", "agent_pub.py"):
+for fname in ("boss_agent.py", "boss_app.py", "agent_pub.py", "boss_launch.pyw"):
     src = os.path.join(HERE, fname)
     dst = os.path.join(STABLE_DIR, fname)
     if os.path.exists(src):
@@ -149,16 +149,20 @@ desktop = os.path.join(os.path.expanduser("~"), "Desktop")
 lnk_path = os.path.join(desktop, "Boss Agent.lnk")
 app_script = os.path.join(STABLE_DIR, "boss_app.py")
 
-# Lance Streamlit (ouvre le navigateur auto), port 8501
+# Lance le .pyw via pythonw.exe (AUCUNE console noire) → fenêtre directe
+pythonw = os.path.join(os.path.dirname(python_exe), "pythonw.exe")
+if not os.path.exists(pythonw):
+    pythonw = python_exe  # repli (rare : pythonw absent)
+launch_script = os.path.join(STABLE_DIR, "boss_launch.pyw")
 ps = f'''
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut("{lnk_path}")
-$sc.TargetPath = "{python_exe}"
-$sc.Arguments = '-m streamlit run "{app_script}" --server.port 8501'
+$sc.TargetPath = "{pythonw}"
+$sc.Arguments = '"{launch_script}"'
 $sc.WorkingDirectory = "{STABLE_DIR}"
 $sc.IconLocation = "{ICON_DST},0"
 $sc.Description = "Boss Agent - Manager autonome (FreeLLMAPI local)"
-$sc.WindowStyle = 7
+$sc.WindowStyle = 1
 $sc.Save()
 Write-Output "Shortcut created"
 '''
@@ -171,5 +175,6 @@ else:
     print(f"[OK] Raccourci créé : {lnk_path}")
 
 print("\n✅ Terminé. Double-clique sur « Boss Agent » sur le Bureau.")
-print("   Streamlit s'ouvre sur http://localhost:8501")
+print("   → La fenêtre du Boss s'ouvre DIRECTEMENT (pas de console noire).")
+print("   → Le navigateur s'ouvre seul sur http://localhost:8501")
 print("   (FreeLLMAPI doit tourner sur 127.0.0.1:31415)")
