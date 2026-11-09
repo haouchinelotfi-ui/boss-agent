@@ -90,6 +90,21 @@ sur **Boss Agent** sur le Bureau.
 
 Le badge de statut apparaîtra dans l'onglet Actions du dépôt.
 
+### Tests unitaires (44 tests, sans réseau)
+
+```bash
+pip install pytest requests
+python -m pytest test_boss.py -v
+```
+
+Couvrent : `_parse_json`, `strip_fences`, `validate` (text/python/json/file),
+`Permissions` (scopes + actions irréversibles), `Doctor` (diagnose, smoke test,
+coupe-circuit), `Boss.plan` (routage de rôle), `Boss.run` (orchestration complète
+avec LLM mocké, escalade, dépendances bloquées), `CallableWorker`.
+
+Les tests utilisent un `FakeLLM` qui ne touche jamais le réseau — ils tournent
+en ~1,5 s et sont exécutés automatiquement par la CI à chaque push.
+
 ## Sécurité
 
 Le Boss détient tous les droits (lecture, écriture, exécution, réseau,

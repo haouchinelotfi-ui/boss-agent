@@ -7,6 +7,11 @@ Aucune clé Anthropic requise. La clé unifiée FreeLLMAPI est lue automatiqueme
 dans sa DB SQLite (%APPDATA%/FreeLLMAPI/freeapi.db), ou via FREELLMAPI_KEY /
 FREELLMAPI_BASE. model="auto" = routage intelligent parmi ~280 modèles.
 
+RÉSILIENCE : si FreeLLMAPI bloque (429/503/réseau), le Boss bascule
+automatiquement vers les fallbacks configurés (Gemini, Groq, OpenAI, Ollama)
+via les variables d'env correspondantes. Il ne s'arrête JAMAIS sur une panne
+transitoire — il attend le cooldown et ré-essaie. Voir LLM._post_chat().
+
 ARCHITECTURE
 ============
 Mission (texte libre)
@@ -67,6 +72,9 @@ MAX_ATTEMPTS = 4
 BREAKER_THRESHOLD = 3
 FREELLMAPI_BASE = os.environ.get("FREELLMAPI_BASE", "http://127.0.0.1:31415").rstrip("/")
 
+# Cooldown (s) imposé à un provider en panne transitoire avant de le ré-essayer.
+PROVIDER_COOLDOWN = int(os.environ.get("LLM_COOLDOWN", "60"))
+
 
 # -------------------------------------------------------------------------- #
 #  LECTURE DE LA CLÉ UNIFIÉE FreeLLMAPI
@@ -91,6 +99,9 @@ def _read_freellm_key() -> str | None:
 
 # -------------------------------------------------------------------------- #
 #  1. LLM  — FreeLLMAPI (OpenAI-compatible), gratuit, local
+#           + FALLBACK multi-provider : si FreeLLMAPI bloque, le Boss
+#           bascule vers Gemini / Groq / OpenAI / Ollama quand configurés.
+#           Il ne s'arrête JAMAIS sur une panne transitoire.
 # -------------------------------------------------------------------------- #
 class LLMError(Exception):
     """Erreur générique du LLM (englobe réseau, rate-limit, format)."""
@@ -104,27 +115,115 @@ class ConnectionErrorLLM(LLMError):
     """Panne réseau / endpoint injoignable (transitoire)."""
 
 
+class AllProvidersDown(LLMError):
+    """Tous les providers LLM configurés sont en panne (transitoire ou non)."""
+
+
+# ---------------------------------------------------------------------- #
+#  Catalogue de providers — FreeLLMAPI local d'abord, puis fallbacks cloud
+# ---------------------------------------------------------------------- #
+@dataclass
+class Provider:
+    name: str
+    kind: str               # "openai" | "gemini"
+    base: str               # endpoint racine (OpenAI) ou "" (Gemini direct)
+    api_key: str
+    model: str
+
+
+def _build_providers() -> list[Provider]:
+    """Liste ordonnée des providers LLM disponibles (fallback automatique).
+    FreeLLMAPI local en priorité ; les suivants ne s'activent que si leur
+    clé/env est configuré. Le Boss ne s'arrête jamais sur une panne : il
+    enchaîne jusqu'à trouver un provider qui répond."""
+    providers: list[Provider] = []
+
+    # 1. FreeLLMAPI local (routeur gratuit, ~280 modèles) — toujours prioritaire.
+    key = _read_freellm_key() or os.environ.get("FREELLM_API_KEY") or "freellmapi"
+    providers.append(Provider(
+        name="FreeLLMAPI", kind="openai",
+        base=FREELLMAPI_BASE, api_key=key,
+        model=os.environ.get("FREELLMAPI_MODEL", "auto"),
+    ))
+
+    # 2. Gemini direct (clé Google AI Studio).
+    gkey = os.environ.get("GEMINI_API_KEY")
+    if gkey:
+        providers.append(Provider(
+            name="Gemini", kind="gemini", base="", api_key=gkey,
+            model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        ))
+
+    # 3. Groq (rapide, gratuit, OpenAI-compatible).
+    if os.environ.get("GROQ_API_KEY"):
+        providers.append(Provider(
+            name="Groq", kind="openai",
+            base="https://api.groq.com/openai",
+            api_key=os.environ["GROQ_API_KEY"],
+            model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        ))
+
+    # 4. OpenAI (payant, si clé configurée).
+    if os.environ.get("OPENAI_API_KEY"):
+        providers.append(Provider(
+            name="OpenAI", kind="openai",
+            base="https://api.openai.com/v1",
+            api_key=os.environ["OPENAI_API_KEY"],
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        ))
+
+    # 5. Ollama local (modèles offline, si installé).
+    if os.environ.get("OLLAMA_URL"):
+        providers.append(Provider(
+            name="Ollama", kind="openai",
+            base=os.environ["OLLAMA_URL"].rstrip("/"),
+            api_key="ollama",  # Ollama ignore la clé mais veut un header
+            model=os.environ.get("OLLAMA_MODEL", "llama3.2"),
+        ))
+
+    # Override : si on force un seul base/model (legacy), on garde le 1er.
+    return providers
+
+
 class LLM:
-    """Client OpenAI-compatible vers FreeLLMAPI local."""
+    """Client LLM résilient. Essaye chaque provider jusqu'à ce qu'un réussisse.
 
-    def __init__(self, base: str = FREELLMAPI_BASE, model: str = MODEL) -> None:
-        self.base = base.rstrip("/")
-        self.model = model
-        self.api_key = _read_freellm_key() or "freellmapi"
+    FreeLLMAPI reste le provider principal ; s'il bloque (429/503/réseau),
+    le Boss bascule automatiquement vers le fallback suivant. Il ne lève
+    AllProvidersDown que si TOUS les providers sont en panne — et même alors,
+    le Doctor peut ré-essayer plus tard (cooldown).
+    """
+
+    def __init__(self, base: str | None = None, model: str | None = None) -> None:
         self.timeout = int(os.environ.get("FREELLMAPI_TIMEOUT", "180"))
+        self.providers = _build_providers()
+        # Compatibilité ascendante : base/model exposent le provider principal.
+        self.base = (base or self.providers[0].base).rstrip("/")
+        self.model = model or self.providers[0].model
+        self.api_key = self.providers[0].api_key
+        # État de santé par provider : {name: (down_until_ts, dernière erreur)}
+        self._health: dict[str, tuple[float, str]] = {}
+        self._active: str | None = None   # dernier provider qui a réussi
 
-    # --- requête HTTP bas niveau ---
-    def _post_chat(self, messages: list[dict], max_tokens: int) -> str:
+    # --- requête HTTP bas niveau sur UN provider ---
+    def _post_one(self, p: Provider, messages: list[dict],
+                  max_tokens: int) -> str:
+        if p.kind == "gemini":
+            return self._post_gemini(p, messages, max_tokens)
+        return self._post_openai(p, messages, max_tokens)
+
+    def _post_openai(self, p: Provider, messages: list[dict],
+                     max_tokens: int) -> str:
         payload = json.dumps({
-            "model": self.model,
+            "model": p.model,
             "messages": messages,
             "max_tokens": max_tokens,
         }).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {p.api_key}",
         }
-        url = f"{self.base}/v1/chat/completions"
+        url = f"{p.base}/v1/chat/completions"
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
@@ -136,7 +235,6 @@ class LLM:
             except Exception:
                 pass
             msg = f"HTTP {e.code} {e.reason} | {body}"
-            # 429 / 503 / rate_limit_error => transitoire
             low = body.lower()
             if e.code in (429, 503) or "rate_limit" in low or "exhausted" in low \
                     or "cooldown" in low or "service_unavailable" in low:
@@ -148,7 +246,88 @@ class LLM:
         try:
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
-            raise LLMError(f"réponse FreeLLMAPI mal formée : {data}") from e
+            raise LLMError(f"réponse {p.name} mal formée : {data}") from e
+
+    def _post_gemini(self, p: Provider, messages: list[dict],
+                     max_tokens: int) -> str:
+        """Appel natif Gemini (generateContent) — conversion OpenAI incluse."""
+        system_text = ""
+        contents = []
+        for m in messages:
+            if m["role"] == "system":
+                system_text += (system_text and "\n" or "") + m["content"]
+            elif m["role"] == "assistant":
+                contents.append({"role": "model", "parts": [{"text": m["content"]}]})
+            else:
+                contents.append({"role": "user", "parts": [{"text": m["content"]}]})
+        body: dict = {"contents": contents}
+        if system_text:
+            body["systemInstruction"] = {"parts": [{"text": system_text}]}
+        body["generationConfig"] = {"maxOutputTokens": max_tokens}
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{p.model}:generateContent?key={p.api_key}")
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                data = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", "replace")[:800]
+            except Exception:
+                pass
+            msg = f"Gemini HTTP {e.code} {e.reason} | {body}"
+            if e.code in (429, 503):
+                raise RateLimitError(msg) from None
+            raise LLMError(msg) from None
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise ConnectionErrorLLM(f"endpoint Gemini injoignable : {e}") from None
+
+        try:
+            parts = data["candidates"][0]["content"]["parts"]
+            return "".join(pt.get("text", "") for pt in parts)
+        except (KeyError, IndexError, TypeError) as e:
+            raise LLMError(f"réponse Gemini mal formée : {data}") from e
+
+    # --- requête avec fallback multi-provider ---
+    def _post_chat(self, messages: list[dict], max_tokens: int) -> str:
+        now = time.time()
+        errors: list[str] = []
+        tried_any = False
+        for p in self.providers:
+            # Provider en cooldown transitoire ? on saute (saite si tous cooldown).
+            down_until, _err = self._health.get(p.name, (0, ""))
+            if now < down_until:
+                errors.append(f"{p.name}: en cooldown ({_err[:60]})")
+                continue
+            tried_any = True
+            try:
+                out = self._post_one(p, messages, max_tokens)
+                self._health.pop(p.name, None)
+                self._active = p.name
+                return out
+            except (RateLimitError, ConnectionErrorLLM) as e:
+                # Panne transitoire → on met ce provider en cooldown et on
+                # enchaîne sur le fallback suivant. Le Boss continue de tourner.
+                self._health[p.name] = (now + PROVIDER_COOLDOWN, str(e)[:200])
+                errors.append(f"{p.name}: {type(e).__name__} {str(e)[:80]}")
+                continue
+            except LLMError as e:
+                # Erreur non transitoire (format, auth) → on tente quand même
+                # le fallback suivant, sans cooldown permanent.
+                errors.append(f"{p.name}: {str(e)[:80]}")
+                continue
+        if not tried_any:
+            # Tous en cooldown → on attend et on ré-essaye le 1er disponible.
+            wait = max(0, min(self._health.get(self.providers[0].name, (0,))[0], now)
+                       - now) + 1
+            raise AllProvidersDown(
+                f"tous les providers en cooldown. Ré-essaie dans {wait:.0f}s. "
+                f"Détails : {' | '.join(errors)}") from None
+        raise AllProvidersDown(
+            f"tous les providers ont échoué. Détails : {' | '.join(errors)}") from None
 
     # --- API haut niveau ---
     def text(self, system: str, user: str, max_tokens: int = 4000) -> str:
@@ -171,6 +350,19 @@ class LLM:
             return True
         except Exception:
             return False
+
+    def status(self) -> dict:
+        """État de santé des providers (pour /sante et le rapport)."""
+        now = time.time()
+        rep = {"providers": [], "actif": self._active}
+        for p in self.providers:
+            du, err = self._health.get(p.name, (0, ""))
+            rep["providers"].append({
+                "name": p.name, "model": p.model,
+                "etat": "cooldown" if now < du else ("ok" if p.name == self._active else "disponible"),
+                "erreur": err or None,
+            })
+        return rep
 
 
 def _parse_json(raw: str) -> dict:
@@ -361,7 +553,7 @@ class Reviewer:
 #  6. MODULE DE MAINTENANCE ET RÉPARATION (DOCTEUR)
 # -------------------------------------------------------------------------- #
 class Doctor:
-    TRANSIENT = (RateLimitError, ConnectionErrorLLM, TimeoutError, ConnectionError)
+    TRANSIENT = (RateLimitError, ConnectionErrorLLM, AllProvidersDown, TimeoutError, ConnectionError)
 
     def __init__(self, audit: Audit, perms: Permissions, run_dir: Path) -> None:
         self.audit, self.perms, self.run_dir = audit, perms, run_dir
@@ -413,7 +605,8 @@ class Doctor:
 
     # --- contrôle de santé ---
     def health_check(self, llm: LLM) -> dict:
-        h = {"disque": False, "llm": False, "llm_mode": "freellmapi"}
+        h = {"disque": False, "llm": False, "llm_mode": "freellmapi",
+             "providers": []}
         try:
             (self.run_dir / ".ping").write_text("ok")
             h["disque"] = True
@@ -422,6 +615,9 @@ class Doctor:
             return h
         try:
             h["llm"] = llm.ping()
+            st = llm.status()
+            h["llm_mode"] = st.get("actif") or "freellmapi"
+            h["providers"] = st.get("providers", [])
         except Exception as e:
             self.audit.log("health_fail", error=str(e))
         return h
@@ -529,10 +725,23 @@ class Boss:
     # --- 3. orchestration ---
     def run(self, mission: str) -> dict:
         health = self.doctor.health_check(self.llm)
+        # Si AUCUN provider ne répond, on ne s'arrête pas définitivement :
+        # on attend la fin du cooldown et on ré-essaie (les providers cloud
+        # peuvent revenir). On n'abandonne que si même après attente ça bloque.
         if not health.get("llm"):
-            return {"erreur": "FreeLLMAPI injoignable sur "
-                     f"{self.llm.base} — démarrez FreeLLMAPI puis relancez.",
-                    "sante": health}
+            self.audit.log("health_down", providers=health.get("providers", []))
+            waited = 0
+            while not health.get("llm") and waited < PROVIDER_COOLDOWN:
+                time.sleep(min(5, PROVIDER_COOLDOWN - waited))
+                waited += 5
+                # Réinitialise les cooldowns pour forcer un nouvel essai global.
+                self.llm._health.clear()
+                health = self.doctor.health_check(self.llm)
+            if not health.get("llm"):
+                return {"erreur": "Tous les providers LLM sont injoignables "
+                         f"(FreeLLMAPI + fallbacks configurés). Ré-essaie plus tard. "
+                         f"Providers : {health.get('providers', [])}",
+                        "sante": health}
         if not health.get("disque"):
             return {"erreur": "contrôle de santé échoué", "sante": health}
 

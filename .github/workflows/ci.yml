@@ -43,3 +43,15 @@ jobs:
         run: |
           pip install requests
           python -c "import boss_agent; print('✅ boss_agent importé, classes:', [c for c in dir(boss_agent) if c[0].isupper()][:8])"
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Installer pytest + dépendances
+        run: pip install pytest requests
+      - name: Lancer les tests unitaires (44 tests, sans réseau)
+        run: python -m pytest test_boss.py -v --tb=short

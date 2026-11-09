@@ -107,8 +107,13 @@ def run_boss_async(chat_id: int, mission: str, allow: bool, brand: str) -> None:
         # Vérification de santé avant de lancer.
         health = boss.doctor.health_check(boss.llm)
         if not health.get("llm"):
-            send(chat_id, f"❌ FreeLLMAPI injoignable sur {boss.llm.base}.\n"
-                          "Démarre FreeLLMAPI (localhost:31415) puis relance.")
+            provs = health.get("providers", [])
+            lignes = ["❌ Aucun provider LLM disponible."]
+            for p in provs:
+                mark = "✅" if p.get("etat") == "ok" else "❌"
+                lignes.append(f"  {mark} <code>{p['name']}</code> ({p.get('model','?')}) — {p.get('etat','?')}")
+            lignes.append("Configure un fallback (GEMINI_API_KEY, GROQ_API_KEY…) ou relance FreeLLMAPI.")
+            send(chat_id, "\n".join(lignes))
             return
 
         t0 = time.time()
@@ -177,14 +182,15 @@ def cmd_help(chat_id: int) -> None:
 def cmd_health(chat_id: int) -> None:
     try:
         llm = LLM()
-        h = LLM.__new__(LLM)
         import boss_agent
         d = boss_agent.Doctor(boss_agent.Audit(Path("runs/_tg_health")), None, Path("runs/_tg_health"))
         health = d.health_check(llm)
         lignes = ["🩺 <b>Contrôle de santé</b>"]
-        for k, v in health.items():
-            mark = "✅" if v else "❌"
-            lignes.append(f"  {mark} <code>{k}</code> : {v}")
+        lignes.append(f"  {'✅' if health.get('disque') else '❌'} <code>disque</code>")
+        lignes.append(f"  {'✅' if health.get('llm') else '❌'} <code>llm</code> — actif : <b>{health.get('llm_mode','?')}</b>")
+        for p in health.get("providers", []):
+            mark = "✅" if p.get("etat") == "ok" else ("⏳" if p.get("etat") == "cooldown" else "⚪")
+            lignes.append(f"  {mark} <code>{p['name']}</code> ({p.get('model','?')}) — {p.get('etat','?')}")
         send(chat_id, "\n".join(lignes))
     except Exception as e:
         send(chat_id, f"❌ Contrôle impossible : {e}")
