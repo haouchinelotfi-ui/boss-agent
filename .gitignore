@@ -1,0 +1,26 @@
+# Runs / livrables générés
+runs/
+output/
+livrables/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Streamlit
+.streamlit/
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets / DB locales
+*.db
+*.sqlite3
+.env
