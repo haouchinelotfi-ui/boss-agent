@@ -27,7 +27,9 @@ Mission (texte libre)
 | `boss_agent.py` | Le Boss : planification, orchestration parallèle, docteur (réparation), rapport. LLM via FreeLLMAPI local. |
 | `boss_app.py` | Interface Streamlit + branchement de l'agent publicité (Wirili). |
 | `agent_pub.py` | Agent publicitaire autonome (Wirili) : posts, slides, fiches, vidéo. Texte=FreeLLMAPI, image=Pollinations, vidéo=multi-provider. |
+| `boss_telegram.py` | Bot Telegram — pilote le Boss depuis ton téléphone, n'importe où (Internet, pas de Wi-Fi partagé). |
 | `install_boss_shortcut.py` | Crée l'icône + raccourci Bureau (Windows). |
+| `.github/workflows/ci.yml` | CI GitHub Actions : lint (ruff) + vérif de syntaxe + import du cœur à chaque push. |
 
 ## Installation
 
@@ -53,8 +55,35 @@ streamlit run boss_app.py --server.address 0.0.0.0
 # puis http://<IP-du-PC>:8501
 ```
 
+### Pilotage Telegram (depuis n'importe où)
+
+L'avantage de Telegram vs Streamlit : il passe par Internet, donc tu pilotes
+le Boss depuis ton téléphone **sans être sur le même Wi-Fi que le PC**.
+
+1. Crée un bot via [@BotFather](https://t.me/BotFather) sur Telegram → récupère le token.
+2. (Optionnel) Récupère ton ID utilisateur via [@userinfobot](https://t.me/userinfobot) pour être admin du `/stop`.
+3. Lance :
+
+```bash
+pip install requests
+export BOSS_TELEGRAM_TOKEN=123456:ABC-...   # Windows : set BOSS_TELEGRAM_TOKEN=...
+export BOSS_ADMIN_IDS=123456789              # ton ID Telegram (admin)
+python boss_telegram.py
+```
+
+Commandes Telegram : `/mission <texte>`, `/sante`, `/run`, `/allow`, `/brand <nom>`, `/stop`.
+
 Ou, sous Windows, après `python install_boss_shortcut.py` : double-cliquer
 sur **Boss Agent** sur le Bureau.
+
+## CI (GitHub Actions)
+
+À chaque `push` sur `main`, le workflow `.github/workflows/ci.yml` :
+- **lint** avec `ruff` (erreurs de syntaxe + undefined names),
+- **compile** tous les `.py` (`py_compile`),
+- **importe** le cœur `boss_agent.py` pour vérifier qu'il charge sans erreur.
+
+Le badge de statut apparaîtra dans l'onglet Actions du dépôt.
 
 ## Sécurité
 

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint (ruff check)
+        run: ruff check --select=E9,F63,F7,F82 --ignore=E501 .
+
+      - name: Syntax check all .py files
+        run: |
+          python -m py_compile boss_agent.py boss_app.py agent_pub.py
+          echo "✅ Tous les modules compilent sans erreur de syntaxe."
+
+      - name: Import check (sans réseau ni dépendances externes)
+        run: |
+          python -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read(),f) for f in ['boss_agent.py','boss_app.py','agent_pub.py','boss_telegram.py']]; print('✅ AST parse OK')"
+
+  import-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Importer le cœur du Boss
+        run: |
+          pip install requests
+          python -c "import boss_agent; print('✅ boss_agent importé, classes:', [c for c in dir(boss_agent) if c[0].isupper()][:8])"
