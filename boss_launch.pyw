@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-BOSS LAUNCH (.pyw) — un clic sur l'icône → la fenêtre du Boss s'ouvre directement.
+BOSS LAUNCH (.pyw) — un clic sur l'icône → la fenêtre native du Boss s'ouvre.
 
   • Lancé par pythonw.exe (AUCUNE fenêtre console noire).
   • Démarre Streamlit en arrière-plan (processus caché).
   • Attend que le serveur soit prêt (poll localhost:8501).
-  • Ouvre directement le navigateur sur la fenêtre du Boss.
+  • Ouvre une FENÊTRE NATIVE (pywebview / Edge WebView2) — pas de Chrome.
+  • Repli navigateur si pywebview absent.
   • En cas de problème : une boîte de dialogue claire (tkinter) s'affiche,
     pas de console.
 """
@@ -122,10 +123,11 @@ def main() -> int:
               erreur=True)
         return 4
 
-    # 6. Ouvrir le navigateur sur la fenêtre du Boss (plusieurs tentatives).
-    if not ouvrir_navigateur(URL):
-        # L ouverture automatique a echouee : on propose un bouton manuel.
-        alert_ouvrir(URL)
+    # 6. Ouvrir une FENÊTRE NATIVE (pywebview) — pas de Chrome.
+    #    Si pywebview absent → repli navigateur classique.
+    if not ouvrir_fenetre_native(URL):
+        if not ouvrir_navigateur(URL):
+            alert_ouvrir(URL)
 
     # 7. Garder le lanceur vivant tant que Streamlit tourne (pour que
     #    l icone de la barre des taches reste presente). Quand l utilisateur
@@ -135,6 +137,44 @@ def main() -> int:
     except KeyboardInterrupt:
         proc.terminate()
     return 0
+
+
+# --------------------------------------------------------------------------- #
+#  Fenêtre native (pywebview / Edge WebView2) — pas de Chrome
+# --------------------------------------------------------------------------- #
+def ouvrir_fenetre_native(url: str) -> bool:
+    """Ouvre le Boss dans une vraie fenêtre desktop native via pywebview.
+    Retourne False si pywebview n'est pas disponible (repli navigateur)."""
+    try:
+        import webview  # pywebview
+    except ImportError:
+        return False
+
+    try:
+        # Fenêtre native : titre, taille, icône, pas de barre Chrome.
+        window = webview.create_window(
+            title="Boss Agent",
+            url=url,
+            width=1280,
+            height=820,
+            min_size=(900, 600),
+            text_select=True,
+            confirm_close=False,
+        )
+        # Activer EdgeChromium (WebView2) sur Windows si dispo.
+        try:
+            webview.start(gui_edge=True, debug=False)  # type: ignore[call-arg]
+        except TypeError:
+            webview.start(debug=False)
+        return True
+    except Exception as e:
+        # pywebview présent mais erreur → on tente quand même le navigateur.
+        try:
+            alert("Boss Agent — fenêtre native échouée",
+                  f"pywebview a échoué : {e}\n\nOuverture dans le navigateur.")
+        except Exception:
+            pass
+        return False
 
 
 # --------------------------------------------------------------------------- #
