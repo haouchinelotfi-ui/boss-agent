@@ -83,9 +83,17 @@ def main() -> int:
               erreur=True)
         return 2
 
-    # 3. Si le serveur tourne déjà, on ouvre juste le navigateur.
+    # 3. Si le serveur tourne déjà, on ouvre juste la fenêtre native.
     if is_port_open():
-        webbrowser.open(URL)
+        if not ouvrir_fenetre_native(URL):
+            if not ouvrir_navigateur(URL):
+                alert_ouvrir(URL)
+        # Rester vivant tant que Streamlit tourne.
+        try:
+            while is_port_open():
+                time.sleep(2)
+        except KeyboardInterrupt:
+            pass
         return 0
 
     # 4. Démarrer Streamlit en arrière-plan (fenêtre cachée, logs en fichier).
@@ -161,14 +169,30 @@ def ouvrir_fenetre_native(url: str) -> bool:
             text_select=True,
             confirm_close=False,
         )
-        # Activer EdgeChromium (WebView2) sur Windows si dispo.
-        try:
-            webview.start(gui_edge=True, debug=False)  # type: ignore[call-arg]
-        except TypeError:
-            webview.start(debug=False)
+        # Nouvelle API pywebview : gui='edgechromium' (Edge WebView2 sur Win).
+        # Ancienne API : gui_edge=True. On tente les deux pour compatibilité.
+        started = False
+        for kwargs in (
+            {"gui": "edgechromium", "debug": False},
+            {"gui": "edgechrom", "debug": False},
+            {"debug": False},  # auto-detection
+        ):
+            try:
+                webview.start(**kwargs)
+                started = True
+                break
+            except (TypeError, ValueError):
+                continue
+        if not started:
+            webview.start()  # dernier recours, defaults
         return True
     except Exception as e:
-        # pywebview présent mais erreur → on tente quand même le navigateur.
+        # pywebview présent mais erreur → log + on tente le navigateur.
+        try:
+            with open(LOG, "a", encoding="utf-8") as f:
+                f.write(f"\n[pywebview ECHEC] {type(e).__name__}: {e}\n")
+        except Exception:
+            pass
         try:
             alert("Boss Agent — fenêtre native échouée",
                   f"pywebview a échoué : {e}\n\nOuverture dans le navigateur.")
