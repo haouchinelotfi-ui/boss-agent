@@ -5,8 +5,10 @@ BOSS LAUNCH (.pyw) — un clic sur l'icône → la fenêtre native du Boss s'ouv
   • Lancé par pythonw.exe (AUCUNE fenêtre console noire).
   • Démarre Streamlit en arrière-plan (processus caché).
   • Attend que le serveur soit prêt (poll localhost:8501).
-  • Ouvre une FENÊTRE NATIVE (pywebview / Edge WebView2) — pas de Chrome.
-  • Repli navigateur si pywebview absent.
+  • Ouvre une FENÊTRE NATIVE (Edge/Chrome en mode --app=) :
+      - pas de barre d'onglets, pas de barre d'URL, pas de menu
+      - ressemble à une vraie application desktop
+  • Repli : pywebview (Edge WebView2) → navigateur classique.
   • En cas de problème : une boîte de dialogue claire (tkinter) s'affiche,
     pas de console.
 """
@@ -28,6 +30,10 @@ URL = f"http://localhost:{PORT}"
 LOG = HERE / "boss_streamlit.log"
 MAX_WAIT = 45  # secondes max pour que Streamlit démarre
 
+# Taille de la fenêtre native.
+WIN_W = 1280
+WIN_H = 820
+
 
 # --------------------------------------------------------------------------- #
 #  Boîte de dialogue (tkinter — toujours disponible avec pythonw)
@@ -45,7 +51,6 @@ def alert(titre: str, message: str, erreur: bool = False) -> None:
             messagebox.showwarning(titre, message, parent=root)
         root.destroy()
     except Exception:
-        # Dernier recours : console (ne devrait jamais arriver avec pythonw)
         print(f"[{titre}] {message}")
 
 
@@ -85,10 +90,7 @@ def main() -> int:
 
     # 3. Si le serveur tourne déjà, on ouvre juste la fenêtre native.
     if is_port_open():
-        if not ouvrir_fenetre_native(URL):
-            if not ouvrir_navigateur(URL):
-                alert_ouvrir(URL)
-        # Rester vivant tant que Streamlit tourne.
+        ouvrir_fenetre(URL)
         try:
             while is_port_open():
                 time.sleep(2)
@@ -102,7 +104,6 @@ def main() -> int:
            "--server.port", str(PORT),
            "--server.headless", "true",
            "--browser.gatherUsageStats", "false"]
-    # CREATE_NO_WINDOW = pas de console sous Windows.
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         with open(LOG, "w", encoding="utf-8") as f:
@@ -119,7 +120,6 @@ def main() -> int:
         if is_port_open():
             break
     else:
-        # Streamlit n'a pas démarré à temps.
         try:
             proc.terminate()
         except Exception:
@@ -131,15 +131,10 @@ def main() -> int:
               erreur=True)
         return 4
 
-    # 6. Ouvrir une FENÊTRE NATIVE (pywebview) — pas de Chrome.
-    #    Si pywebview absent → repli navigateur classique.
-    if not ouvrir_fenetre_native(URL):
-        if not ouvrir_navigateur(URL):
-            alert_ouvrir(URL)
+    # 6. Ouvrir la fenêtre native.
+    ouvrir_fenetre(URL)
 
-    # 7. Garder le lanceur vivant tant que Streamlit tourne (pour que
-    #    l icone de la barre des taches reste presente). Quand l utilisateur
-    #    ferme Streamlit (Ctrl+C ou arret), le lanceur se termine proprement.
+    # 7. Garder le lanceur vivant tant que Streamlit tourne.
     try:
         proc.wait()
     except KeyboardInterrupt:
@@ -148,34 +143,103 @@ def main() -> int:
 
 
 # --------------------------------------------------------------------------- #
-#  Fenêtre native (pywebview / Edge WebView2) — pas de Chrome
+#  Ouverture de la fenêtre native — priorité au mode --app=
 # --------------------------------------------------------------------------- #
-def ouvrir_fenetre_native(url: str) -> bool:
-    """Ouvre le Boss dans une vraie fenêtre desktop native via pywebview.
-    Retourne False si pywebview n'est pas disponible (repli navigateur)."""
+def ouvrir_fenetre(url: str) -> None:
+    """Ouvre le Boss dans une fenêtre native. Essaie dans l'ordre :
+       1. Edge/Chrome en mode --app= (vraie fenêtre native, pas de barres)
+       2. pywebview (Edge WebView2)
+       3. navigateur classique (repli)
+    """
+    # 1. Mode --app= (priorité) — fenêtre native sans barre Chrome.
+    if ouvrir_app_mode(url):
+        return
+    # 2. pywebview (repli).
+    if ouvrir_pywebview(url):
+        return
+    # 3. navigateur classique (dernier recours).
+    if not ouvrir_navigateur(url):
+        alert_ouvrir(url)
+
+
+def _trouver_navigateur_app() -> str | None:
+    """Cherche l'exécutable Edge puis Chrome pour le mode --app=."""
+    # ... existing code ... (chemins possibles sur Windows)
+    cands: list[Path] = []
+    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    # Edge (prioritaire : préinstallé sur Win10/11, mode --app= propre).
+    cands += [
+        Path(pf) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(pf86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(localappdata) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+    ]
+    # Chrome.
+    cands += [
+        Path(pf) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(pf86) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(localappdata) / "Google" / "Chrome" / "Application" / "chrome.exe",
+    ]
+    for c in cands:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def ouvrir_app_mode(url: str) -> bool:
+    """Ouvre Edge/Chrome en mode --app= : fenêtre native sans barre d'URL,
+    sans onglets, sans menu. Ressemble à une vraie application desktop."""
+    exe = _trouver_navigateur_app()
+    if not exe:
+        return False
+    try:
+        args = [
+            exe,
+            f"--app={url}",
+            f"--window-size={WIN_W},{WIN_H}",
+            "--window-position=120,60",
+            "--no-default-browser-check",
+            "--no-first-run",
+            "--disable-extensions",
+        ]
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(args, creationflags=flags)
+        return True
+    except Exception as e:
+        try:
+            with open(LOG, "a", encoding="utf-8") as f:
+                f.write(f"\n[app-mode ECHEC] {type(e).__name__}: {e}\n")
+        except Exception:
+            pass
+        return False
+
+
+# --------------------------------------------------------------------------- #
+#  pywebview (Edge WebView2) — repli
+# --------------------------------------------------------------------------- #
+def ouvrir_pywebview(url: str) -> bool:
+    """Ouvre le Boss dans une fenêtre native via pywebview. Retourne False
+    si pywebview n'est pas disponible ou échoue."""
     try:
         import webview  # pywebview
     except ImportError:
         return False
-
     try:
-        # Fenêtre native : titre, taille, icône, pas de barre Chrome.
-        window = webview.create_window(
+        webview.create_window(
             title="Boss Agent",
             url=url,
-            width=1280,
-            height=820,
+            width=WIN_W,
+            height=WIN_H,
             min_size=(900, 600),
             text_select=True,
             confirm_close=False,
         )
-        # Nouvelle API pywebview : gui='edgechromium' (Edge WebView2 sur Win).
-        # Ancienne API : gui_edge=True. On tente les deux pour compatibilité.
         started = False
         for kwargs in (
             {"gui": "edgechromium", "debug": False},
             {"gui": "edgechrom", "debug": False},
-            {"debug": False},  # auto-detection
+            {"debug": False},
         ):
             try:
                 webview.start(**kwargs)
@@ -184,29 +248,21 @@ def ouvrir_fenetre_native(url: str) -> bool:
             except (TypeError, ValueError):
                 continue
         if not started:
-            webview.start()  # dernier recours, defaults
+            webview.start()
         return True
     except Exception as e:
-        # pywebview présent mais erreur → log + on tente le navigateur.
         try:
             with open(LOG, "a", encoding="utf-8") as f:
                 f.write(f"\n[pywebview ECHEC] {type(e).__name__}: {e}\n")
-        except Exception:
-            pass
-        try:
-            alert("Boss Agent — fenêtre native échouée",
-                  f"pywebview a échoué : {e}\n\nOuverture dans le navigateur.")
         except Exception:
             pass
         return False
 
 
 # --------------------------------------------------------------------------- #
-#  Ouverture robuste du navigateur (pythonw peut faire echouer webbrowser)
+#  Ouverture robuste du navigateur (dernier recours)
 # --------------------------------------------------------------------------- #
 def ouvrir_navigateur(url: str) -> bool:
-    """Tente d ouvrir le navigateur par plusieurs methodes."""
-    # Methode 1 : webbrowser.open, plusieurs essais etcarts.
     for i in range(4):
         try:
             ok = webbrowser.open(url, new=2)
@@ -215,7 +271,6 @@ def ouvrir_navigateur(url: str) -> bool:
         except Exception:
             pass
         time.sleep(0.8)
-    # Methode 2 : os.startfile (Windows) — equivalent a un double-clic sur l URL.
     try:
         os.startfile(url)  # type: ignore[attr-defined]
         return True
@@ -225,11 +280,8 @@ def ouvrir_navigateur(url: str) -> bool:
 
 
 def alert_ouvrir(url: str) -> None:
-    """Le Boss est pret mais le navigateur ne s est pas ouvert : on propose
-    un bouton pour l ouvrir manuellement."""
     try:
         import tkinter as tk
-        from tkinter import messagebox
         root = tk.Tk()
         root.title("Boss Agent")
         root.geometry("460x180")
@@ -251,7 +303,6 @@ def alert_ouvrir(url: str) -> None:
                   bg="#4CAF50", fg="white", relief="flat").pack(pady=12)
         root.mainloop()
     except Exception:
-        # Dernier recours : alerte simple.
         alert("Boss Agent — pret",
               f"Le Boss est pret. Ouvre manuellement :\n{url}")
 
