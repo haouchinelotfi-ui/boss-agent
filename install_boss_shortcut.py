@@ -159,7 +159,17 @@ if need_write:
 #  4. RACCOURCI SUR LE BUREAU
 # --------------------------------------------------------------------------- #
 python_exe = sys.executable
-desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+
+# Détecte le VRAI Bureau (normal OU OneDrive OU Bureau localisé FR)
+home = os.path.expanduser("~")
+candidates = [
+    os.path.join(home, "Desktop"),
+    os.path.join(home, "OneDrive", "Desktop"),
+    os.path.join(home, "OneDrive", "Bureau"),
+    os.path.join(home, "Bureau"),
+]
+desktop = next((p for p in candidates if os.path.isdir(p)), candidates[0])
+print(f"[i] Bureau détecté : {desktop}")
 lnk_path = os.path.join(desktop, "Boss Agent.lnk")
 app_script = os.path.join(STABLE_DIR, "boss_app.py")
 
