@@ -15,13 +15,7 @@ if not exist "%DIR%" mkdir "%DIR%"
 cd /d "%DIR%"
 
 echo  [1/5] Telechargement des fichiers...
-powershell -NoProfile -Command ^
-  "$t=[DateTime]::Now.Ticks;" ^
-  "$u='https://raw.githubusercontent.com/haouchinelotfi-ui/boss-agent/main';" ^
-  "Invoke-WebRequest \"$u/install_wirili_shortcut.py?t=$t\" -OutFile install_wirili_shortcut.py" ^
-  ; Invoke-WebRequest "$u/wirili_app.py?t=$t" -OutFile wirili_app.py" ^
-  ; Invoke-WebRequest "$u/wirili_launch.pyw?t=$t" -OutFile wirili_launch.pyw" ^
-  ; Invoke-WebRequest "$u/agent_pub.py?t=$t" -OutFile agent_pub.py"
+powershell -NoProfile -Command "$t=[DateTime]::Now.Ticks; $u='https://raw.githubusercontent.com/haouchinelotfi-ui/boss-agent/main'; Invoke-WebRequest (\"$u/install_wirili_shortcut.py?t=$t\") -OutFile install_wirili_shortcut.py; Invoke-WebRequest (\"$u/wirili_app.py?t=$t\") -OutFile wirili_app.py; Invoke-WebRequest (\"$u/wirili_launch.pyw?t=$t\") -OutFile wirili_launch.pyw; Invoke-WebRequest (\"$u/agent_pub.py?t=$t\") -OutFile agent_pub.py"
 
 if errorlevel 1 (
   echo.

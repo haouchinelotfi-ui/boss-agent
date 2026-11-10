@@ -15,13 +15,7 @@ if not exist "%DIR%" mkdir "%DIR%"
 cd /d "%DIR%"
 
 echo  [1/5] Telechargement des fichiers...
-powershell -NoProfile -Command ^
-  "$t=[DateTime]::Now.Ticks;" ^
-  "$u='https://raw.githubusercontent.com/haouchinelotfi-ui/boss-agent/main';" ^
-  "Invoke-WebRequest \"$u/install_boss_shortcut.py?t=$t\" -OutFile install_boss_shortcut.py" ^
-  ; Invoke-WebRequest "$u/boss_app.py?t=$t" -OutFile boss_app.py" ^
-  ; Invoke-WebRequest "$u/boss_agent.py?t=$t" -OutFile boss_agent.py" ^
-  ; Invoke-WebRequest "$u/boss_launch.pyw?t=$t" -OutFile boss_launch.pyw"
+powershell -NoProfile -Command "$t=[DateTime]::Now.Ticks; $u='https://raw.githubusercontent.com/haouchinelotfi-ui/boss-agent/main'; Invoke-WebRequest (\"$u/install_boss_shortcut.py?t=$t\") -OutFile install_boss_shortcut.py; Invoke-WebRequest (\"$u/boss_app.py?t=$t\") -OutFile boss_app.py; Invoke-WebRequest (\"$u/boss_agent.py?t=$t\") -OutFile boss_agent.py; Invoke-WebRequest (\"$u/boss_launch.pyw?t=$t\") -OutFile boss_launch.pyw"
 
 if errorlevel 1 (
   echo.
